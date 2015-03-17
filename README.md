@@ -25,7 +25,7 @@ Installation
 
 Clone this repository
 
-    git clone https://github.com/pixelated-team/puppet-git-hooks.git
+    git clone https://github.com/pixelated-project/puppet-git-hooks.git
 
 Go in the git hooks directory of you puppet git repository
 
