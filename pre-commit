@@ -2,45 +2,60 @@
 
 TERM=${TERM:-unknown}; export TERM
 
-git_root=`git rev-parse --show-toplevel`
+git_root=$(git rev-parse --show-toplevel)
 failures=0
 RC=0
 
-subhook_root=$git_root/.git/hooks/commit_hooks
+hook_dir="$(dirname "$0")"
+hook_symlink="$(readlink "$0")"
 
-hook_dir="$(dirname $0)"
-hook_symlink="$(readlink $0)"
-
-# Figure out where commit hooks are if pre-commit is setup as a symlink
-if [ ! -z "$hook_symlink" ] && ! [[ "$hook_symlink" == ../* ]]; then
-  subhook_root="$(dirname $hook_symlink)/commit_hooks"
+# Figure out where commit hooks are
+if [[ ! -z "$hook_symlink" ]] && ! [[ "$hook_symlink" == ../* ]]; then
+  #pre-commit is setup as a symlink
+  subhook_root="$(dirname "$hook_symlink")/commit_hooks"
+else
+  #commit_hooks should be with pre-commit
+  subhook_root="${hook_dir}/commit_hooks"
 fi
 
 # If using submodules, we need to read proper subhook root
-if [ -f "$git_root/.git" ]; then
+if [[ -f "$git_root/.git" ]]; then
     IFS=": "
     while read -r name value
     do
-        if [ $name == "gitdir" ]; then
+        if [[ $name == "gitdir" ]]; then
             submodule_hookdir=$value
         fi
     done < "$git_root/.git"
-    if [ ! -z "$submodule_hookdir" ]; then
+    if [[ ! -z "$submodule_hookdir" ]]; then
         subhook_root="$git_root/$submodule_hookdir/hooks/commit_hooks"
     fi
+fi
+
+# Decide if we want puppet-lint
+CHECK_PUPPET_LINT="enabled"
+if [[ -e ${subhook_root}/config.cfg ]] ; then
+    source "${subhook_root}/config.cfg"
 fi
 
 SAVEIFS=$IFS
 IFS=$(echo -en "\n\b")
 
-for changedfile in `git diff --cached --name-only --diff-filter=ACM`; do
+for changedfile in $(git diff --cached --name-only --diff-filter=ACM); do
+    [[ -f "$changedfile" ]] || continue
     #check puppet manifest syntax
     if type puppet >/dev/null 2>&1; then
-        if [ $(echo $changedfile | grep -q '\.*.pp$'; echo $?) -eq 0 ]; then
-            ${subhook_root}/puppet_manifest_syntax_check.sh $changedfile
+        if [[ $(echo "$changedfile" | grep -q '\.*\.epp$'; echo $?) -eq 0 ]]; then
+            ${subhook_root}/puppet_epp_syntax_check.sh "$changedfile"
             RC=$?
-            if [ "$RC" -ne 0 ]; then
-                failures=`expr $failures + 1`
+            if [[ "$RC" -ne 0 ]]; then
+                failures=$((failures + 1))
+            fi
+        elif [[ $(echo "$changedfile" | grep -q '\.*\.pp$'; echo $?) -eq 0 ]]; then
+            ${subhook_root}/puppet_manifest_syntax_check.sh "$changedfile"
+            RC=$?
+            if [[ "$RC" -ne 0 ]]; then
+                failures=$((failures + 1))
             fi
         fi
     else
@@ -50,11 +65,11 @@ for changedfile in `git diff --cached --name-only --diff-filter=ACM`; do
     if type ruby >/dev/null 2>&1; then
         #check erb (template file) syntax
         if type erb >/dev/null 2>&1; then
-            if [ $(echo $changedfile | grep -q '\.*.erb$'; echo $?) -eq 0 ]; then
-                ${subhook_root}/erb_template_syntax_check.sh $changedfile
+            if [[ $(echo "$changedfile" | grep -q '\.*.erb$'; echo $?) -eq 0 ]]; then
+                ${subhook_root}/erb_template_syntax_check.sh "$changedfile"
                 RC=$?
-                if [ "$RC" -ne 0 ]; then
-                    failures=`expr $failures + 1`
+                if [[ "$RC" -ne 0 ]]; then
+                    failures=$((failures + 1))
                 fi
             fi
         else
@@ -62,20 +77,20 @@ for changedfile in `git diff --cached --name-only --diff-filter=ACM`; do
         fi
 
         #check hiera data (yaml/yml/eyaml/eyml) syntax
-        if [ $(echo $changedfile | grep -q '\.*.e\?ya\?ml$'; echo $?) -eq 0 ]; then 
-            ${subhook_root}/yaml_syntax_check.sh $changedfile
+        if [[ $(echo "$changedfile" | grep -q '\.*.e\?ya\?ml$'; echo $?) -eq 0 ]]; then
+            ${subhook_root}/yaml_syntax_check.sh "$changedfile"
             RC=$?
-            if [ "$RC" -ne 0 ]; then
-                failures=`expr $failures + 1`
+            if [[ "$RC" -ne 0 ]]; then
+                failures=$((failures + 1))
             fi
         fi
 
         #check json (i.e. metadata.json) syntax
-        if [ $(echo $changedfile | grep -q '\.*.json$'; echo $?) -eq 0 ]; then 
-            ${subhook_root}/json_syntax_check.sh $changedfile
+        if [[ $(echo "$changedfile" | grep -q '\.*.json$'; echo $?) -eq 0 ]]; then
+            ${subhook_root}/json_syntax_check.sh "$changedfile"
             RC=$?
-            if [ "$RC" -ne 0 ]; then
-                failures=`expr $failures + 1`
+            if [[ "$RC" -ne 0 ]]; then
+                failures=$((failures + 1))
             fi
         fi
     else
@@ -83,33 +98,50 @@ for changedfile in `git diff --cached --name-only --diff-filter=ACM`; do
     fi
 
     #puppet manifest styleguide compliance
-    if type puppet-lint >/dev/null 2>&1; then
-        if [ $(echo $changedfile | grep -q '\.*.pp$' ; echo $?) -eq 0 ]; then 
-            ${subhook_root}/puppet_lint_checks.sh $changedfile
-            RC=$?
-            if [ "$RC" -ne 0 ]; then
-                failures=`expr $failures + 1`
+    if [[ "$CHECK_PUPPET_LINT" != "disabled" ]] ; then
+        if type puppet-lint >/dev/null 2>&1; then
+            if [[ $(echo "$changedfile" | grep -q '\.*\.pp$' ; echo $?) -eq 0 ]]; then
+                ${subhook_root}/puppet_lint_checks.sh "$CHECK_PUPPET_LINT" "$changedfile"
+                RC=$?
+                if [[ "$RC" -ne 0 ]]; then
+                    failures=$((failures + 1))
+                fi
             fi
+        else
+            echo "puppet-lint not installed. Skipping puppet-lint tests..."
         fi
-    else
-        echo "puppet-lint not installed. Skipping puppet-lint tests..."
     fi
 done
 IFS=$SAVEIFS
 
 #rspec test validation
-if which rspec >/dev/null 2>&1; then
-    ${subhook_root}/rspec_puppet_checks.sh
-    RC=$?
-    if [ "$RC" -ne 0 ]; then
-        failures=`expr $failures + 1`
-    fi
+if [[ "$CHECK_RSPEC" != "disabled" ]] ; then
+  if hash rspec >/dev/null 2>&1; then
+      ${subhook_root}/rspec_puppet_checks.sh
+      RC=$?
+      if [[ "$RC" -ne 0 ]]; then
+          failures=$((failures + 1))
+      fi
+  else
+      echo "rspec not installed. Skipping rspec-puppet tests..."
+  fi
+fi
+
+#r10k puppetfile syntax check
+if hash r10k >/dev/null 2>&1; then
+  if [[ "$changedfile" = "Puppetfile" ]]; then
+        "${subhook_root}/r10k_syntax_check.sh"
+        RC=$?
+        if [[ "$RC" -ne 0 ]]; then
+                failures=$((failures + 1))
+        fi
+  fi
 else
-    echo "rspec not installed. Skipping rspec-puppet tests..."
+    echo "r10k not installed. Skipping r10k Puppetfile test..."
 fi
 
 #summary
-if [ "$failures" -ne 0 ]; then
+if [[ "$failures" -ne 0 ]]; then
     echo -e "$(tput setaf 1)Error: $failures subhooks failed. Aborting commit.$(tput sgr0)"
     exit 1
 fi
