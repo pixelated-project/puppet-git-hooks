@@ -20,6 +20,16 @@ Current supported pre-receive (server side) checks
 * Puppet-lint
 * Yaml (hiera data) syntax
 
+Prerequisites
+=============
+
+These hooks depend on the follwing packages installed:
+
+* puppet
+* puppet-lint
+
+Either install them as gem or as package provided by your distribution.
+
 Installation
 ============
 
